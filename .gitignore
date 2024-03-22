@@ -48,3 +48,11 @@ model_ts*.txt
 .vscode
 _darcs
 output/
+
+dataset/
+opdformer/annotations
+opdformer/vis_output
+opdformer/wild_output
+opdformer/wild_output_h
+plt.py
+wild_output

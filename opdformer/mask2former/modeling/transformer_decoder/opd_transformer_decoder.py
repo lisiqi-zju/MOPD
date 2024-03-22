@@ -96,6 +96,8 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
         # positional encoding
         N_steps = hidden_dim // 2
         self.pe_layer = PositionEmbeddingSine(N_steps, normalize=True)
+        self.pe_layer2 = PositionEmbeddingSine(N_steps, normalize=True)
+        self.pe_layer3 = PositionEmbeddingSine(N_steps, normalize=True)
         
         # define Transformer decoder here
         self.num_heads = nheads
@@ -103,6 +105,9 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
         self.transformer_self_attention_layers = nn.ModuleList()
         self.transformer_cross_attention_layers = nn.ModuleList()
         self.transformer_ffn_layers = nn.ModuleList()
+        
+        self.seg_cross_attention_layers = nn.ModuleList()
+        self.normal_cross_attention_layers = nn.ModuleList()
 
         for _ in range(self.num_layers):
             self.transformer_self_attention_layers.append(
@@ -122,7 +127,23 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
                     normalize_before=pre_norm,
                 )
             )
-
+            
+            self.seg_cross_attention_layers.append(
+                CrossAttentionLayer(
+                    d_model=hidden_dim,
+                    nhead=nheads,
+                    dropout=0.0,
+                    normalize_before=pre_norm,
+                )
+            )
+            self.normal_cross_attention_layers.append(
+                CrossAttentionLayer(
+                    d_model=hidden_dim,
+                    nhead=nheads,
+                    dropout=0.0,
+                    normalize_before=pre_norm,
+                )
+            )
             self.transformer_ffn_layers.append(
                 FFNLayer(
                     d_model=hidden_dim,
@@ -150,6 +171,29 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
                 weight_init.c2_xavier_fill(self.input_proj[-1])
             else:
                 self.input_proj.append(nn.Sequential())
+                
+        self.input_proj2 = nn.ModuleList()
+        normal_in_channels=[2048,176,64]
+        # nn.Sequential(
+        #             nn.Conv2d(in_channels, conv_dim, kernel_size=1),
+        #             nn.GroupNorm(32, conv_dim),
+        #         )
+        for i in range(3):
+            self.input_proj2.append(
+                nn.Sequential(
+                    Conv2d(normal_in_channels[i], hidden_dim, kernel_size=1),
+                    nn.GroupNorm(32, hidden_dim),
+                    ))
+            # weight_init.c2_xavier_fill(self.input_proj2[-1])
+
+        self.input_proj3 = nn.ModuleList()
+        for _ in range(self.num_feature_levels):
+            if in_channels != hidden_dim or enforce_input_project:
+                self.input_proj3.append(Conv2d(in_channels, hidden_dim, kernel_size=1))
+                weight_init.c2_xavier_fill(self.input_proj3[-1])
+            else:
+                self.input_proj3.append(nn.Sequential())
+
 
         # output FFNs
         if self.mask_classification:
@@ -307,7 +351,7 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
 
         return ret
 
-    def forward(self, x, mask_features, mask = None):
+    def forward(self, x, mask_features, mask = None,seg_feature=None,normal_feature=None):
         # x is a list of multi-scale feature
         assert len(x) == self.num_feature_levels
         src = []
@@ -325,11 +369,28 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
             # flatten NxCxHxW to HWxNxC
             pos[-1] = pos[-1].permute(2, 0, 1)
             src[-1] = src[-1].permute(2, 0, 1)
+            
+        normal_pos = []
+        normal_src = []
+        for i in range(len(normal_feature)):
+            normal_pos.append(self.pe_layer2(normal_feature[i], None).flatten(2))
+            normal_src.append(self.input_proj2[i](normal_feature[i]).flatten(2) + self.level_embed.weight[i][None, :, None])
 
+            # flatten NxCxHxW to HWxNxC
+            normal_pos[-1] = normal_pos[-1].permute(2, 0, 1)
+            normal_src[-1] = normal_src[-1].permute(2, 0, 1)
+
+        seg_feature_src=self.input_proj3[0](seg_feature).flatten(2)
+        seg_feature_src=seg_feature_src.permute(2, 0, 1)
+        
+        seg_pos=self.pe_layer3(seg_feature, None).flatten(2)
+        seg_pos = seg_pos.permute(2, 0, 1)
+        
         _, bs, _ = src[0].shape
 
-        # QxNxC
+        # seg_feature=seg_feature.permute(2, 0, 1)
         query_embed = self.query_embed.weight.unsqueeze(1).repeat(1, bs, 1)
+       
         output = self.query_feat.weight.unsqueeze(1).repeat(1, bs, 1)
 
         predictions_class = []
@@ -338,6 +399,7 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
         predictions_mtype = []
         predictions_morigin = []
         predictions_maxis = []
+        my_predictions=[]
 
         if self.motionnet_type == "BMOC_V1" or self.motionnet_type == "BMOC_V2" or self.motionnet_type == "BMOC_V3" or self.motionnet_type == "BMOC_V4" or self.motionnet_type == "BMOC_V5" or self.motionnet_type == "BMOC_V6":
             predictions_extrinsic = []
@@ -345,15 +407,15 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
 
         # prediction heads on learnable query features
         outputs_class, outputs_mask, attn_mask, outputs_mtype, outputs_morigin, outputs_maxis, outputs_extrinsic = self.forward_prediction_heads(output, mask_features, attn_mask_target_size=size_list[0], query_embed=query_embed)
-        predictions_class.append(outputs_class)
-        predictions_mask.append(outputs_mask)
+        # predictions_class.append(outputs_class)
+        # predictions_mask.append(outputs_mask)
         # OPD
-        predictions_mtype.append(outputs_mtype)
-        predictions_morigin.append(outputs_morigin)
-        predictions_maxis.append(outputs_maxis)
+        # predictions_mtype.append(outputs_mtype)
+        # predictions_morigin.append(outputs_morigin)
+        # predictions_maxis.append(outputs_maxis)
 
-        if self.motionnet_type == "BMOC_V1" or self.motionnet_type == "BMOC_V2" or self.motionnet_type == "BMOC_V3" or self.motionnet_type == "BMOC_V4" or self.motionnet_type == "BMOC_V5" or self.motionnet_type == "BMOC_V6":
-            predictions_extrinsic.append(outputs_extrinsic)
+        # if self.motionnet_type == "BMOC_V1" or self.motionnet_type == "BMOC_V2" or self.motionnet_type == "BMOC_V3" or self.motionnet_type == "BMOC_V4" or self.motionnet_type == "BMOC_V5" or self.motionnet_type == "BMOC_V6":
+        #     predictions_extrinsic.append(outputs_extrinsic)
 
         for i in range(self.num_layers):
             level_index = i % self.num_feature_levels
@@ -366,11 +428,28 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
                 pos=pos[level_index], query_pos=query_embed
             )
 
+            # output = self.seg_cross_attention_layers[i](
+            #     output, seg_feature_src,
+            #     memory_mask=None,
+            #     memory_key_padding_mask=None,  # here we do not apply masking on padded region
+            #     pos=seg_pos, query_pos=query_embed
+            # )
+
+            if i >3:
+                output = self.normal_cross_attention_layers[i](
+                    output, normal_src[level_index],
+                    memory_mask=None,
+                    memory_key_padding_mask=None,  # here we do not apply masking on padded region
+                    pos=normal_pos[level_index], query_pos=query_embed
+                )
+
+
             output = self.transformer_self_attention_layers[i](
                 output, tgt_mask=None,
                 tgt_key_padding_mask=None,
                 query_pos=query_embed
             )
+            
             
             # FFN
             output = self.transformer_ffn_layers[i](
@@ -378,17 +457,29 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
             )
 
             outputs_class, outputs_mask, attn_mask, outputs_mtype, outputs_morigin, outputs_maxis, outputs_extrinsic = self.forward_prediction_heads(output, mask_features, attn_mask_target_size=size_list[(i + 1) % self.num_feature_levels], query_embed=query_embed)
-            predictions_class.append(outputs_class)
-            predictions_mask.append(outputs_mask)
-            # OPD
-            predictions_mtype.append(outputs_mtype)
-            predictions_morigin.append(outputs_morigin)
-            predictions_maxis.append(outputs_maxis)
+            # predictions_class.append(outputs_class)
+            # predictions_mask.append(outputs_mask)
+            # # OPD
+            # predictions_mtype.append(outputs_mtype)
+            # predictions_morigin.append(outputs_morigin)
+            # predictions_maxis.append(outputs_maxis)
+            
+            if i <5:
+                predictions_class.append(outputs_class)
+                predictions_mask.append(outputs_mask)
+                predictions_mtype.append(outputs_mtype)
+    
+            # predictions_class.append(outputs_class)
+            # predictions_mask.append(outputs_mask)
+            # predictions_mtype.append(outputs_mtype)
+            if i>3 :
+                predictions_morigin.append(outputs_morigin)
+                predictions_maxis.append(outputs_maxis)
+                
+                if self.motionnet_type == "BMOC_V1" or self.motionnet_type == "BMOC_V2" or self.motionnet_type == "BMOC_V3" or self.motionnet_type == "BMOC_V4" or self.motionnet_type == "BMOC_V5" or self.motionnet_type == "BMOC_V6":
+                    predictions_extrinsic.append(outputs_extrinsic)
 
-            if self.motionnet_type == "BMOC_V1" or self.motionnet_type == "BMOC_V2" or self.motionnet_type == "BMOC_V3" or self.motionnet_type == "BMOC_V4" or self.motionnet_type == "BMOC_V5" or self.motionnet_type == "BMOC_V6":
-                predictions_extrinsic.append(outputs_extrinsic)
-
-        assert len(predictions_class) == self.num_layers + 1
+        # assert len(predictions_class) == self.num_layers + 1
         if self.mask_classification:
             if self.motionnet_type == "BMOC_V0" or self.motionnet_type == "BMCC":
                 aux_outputs = self._set_aux_loss(
@@ -411,6 +502,7 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
         out = {
             'pred_logits': predictions_class[-1],
             'pred_masks': predictions_mask[-1],
+            
             # OPD
             'pred_mtypes': predictions_mtype[-1],
             'pred_morigins': predictions_morigin[-1],

@@ -26,7 +26,7 @@ from typing import List, Optional, Union
 import torch
 import pycocotools.mask as mask_util
 import h5py
-
+import cv2
 from ..utils.tranform import matrix_to_quaternion, quaternion_to_matrix, rotation_6d_to_matrix, matrix_to_rotation_6d
 
 MOTION_TYPE = {"rotation": 0, "translation": 1}
@@ -211,9 +211,7 @@ class MotionDatasetMapper(DatasetMapper):
             self.load_object_pose(self.MODELATTRPATH)
 
         model_name = dataset_dict["file_name"].split("/")[-1].split("-")[0]
-
         utils.check_image_size(dataset_dict, image)
-
         aug_input = T.AugInput(image, sem_seg=None)
         transforms = self.augmentations(aug_input)
         image = aug_input.image
@@ -461,3 +459,19 @@ def bm_annotations_to_instances(
         target.gt_keypoints = Keypoints(kpts)
 
     return target
+
+class WildDatasetMapper(DatasetMapper):
+    def __call__(self, dataset_dict):
+        dataset_dict = copy.deepcopy(dataset_dict)  # it will be modified by code below
+            # Get the Dataset path
+        base_dir = os.path.split(os.path.split(dataset_dict["file_name"])[0])[0]
+        dir = os.path.split(os.path.split(dataset_dict["file_name"])[0])[-1]
+        file_name = os.path.split(dataset_dict["file_name"])[-1]
+        image_path=base_dir+'/'+dir+'/'+file_name
+        image=cv2.imread(image_path)
+        dataset_dict["image"]=torch.as_tensor(
+            np.ascontiguousarray(image.transpose(2, 0, 1))
+        )
+        
+        return dataset_dict
+              

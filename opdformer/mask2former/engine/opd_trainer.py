@@ -17,7 +17,7 @@ import torch
 import copy
 import itertools
 import logging
-from mask2former.data import MotionDatasetMapper
+from mask2former.data import MotionDatasetMapper, WildDatasetMapper
 from mask2former.evaluation import (
     MotionEvaluator,
     motion_inference_on_dataset,
@@ -115,6 +115,10 @@ class OPDTrainer(DefaultTrainer):
         mapper = MotionDatasetMapper(cfg, False)
         return build_detection_test_loader(cfg, dataset_name, mapper=mapper)
 
+    @classmethod
+    def build_wild_loader(cls,cfg,dataset_name):
+        mapper = WildDatasetMapper(cfg, False)
+        return build_detection_test_loader(cfg, dataset_name, mapper=mapper)
     @classmethod
     def build_lr_scheduler(cls, cfg, optimizer):
         """
@@ -231,6 +235,7 @@ class OPDTrainer(DefaultTrainer):
         results = OrderedDict()
         for idx, dataset_name in enumerate(cfg.DATASETS.TEST):
             data_loader = cls.build_test_loader(cfg, dataset_name)
+            # data_loader = cls.build_wild_loader(cfg,dataset_name)
             # When evaluators are passed in as arguments,
             # implicitly assume that evaluators can be created before data_loader.
             if evaluators is not None:

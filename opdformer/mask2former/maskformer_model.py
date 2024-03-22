@@ -21,6 +21,13 @@ from .modeling.criterion import convert_to_filled_tensor
 
 import numpy as np
 
+# from torch.utils.tensorboard import SummaryWriter 
+# writer = SummaryWriter('./tensorboard_log')
+
+from .segmen_anything import ImageEncoderViT,ImageEncoderViTESAM,Encoder,Decoder
+from functools import partial
+  
+
 @META_ARCH_REGISTRY.register()
 class MaskFormer(nn.Module):
     """
@@ -109,7 +116,78 @@ class MaskFormer(nn.Module):
         self.gtdet = gtdet
         self.inference_matcher = inference_matcher
         self.gtextrinsic = gtextrinsic
+        
+        # prompt_embed_dim = 256
+        # image_size = 1024
+        # vit_patch_size = 16
 
+        # encoder_embed_dim=1280
+        # encoder_depth=32
+        # encoder_num_heads=16
+        # encoder_global_attn_indexes=[7, 15, 23, 31]
+
+        # self.SAM_encoder=ImageEncoderViT(
+        #     depth=encoder_depth,
+        #     embed_dim=encoder_embed_dim,
+        #     img_size=image_size,
+        #     mlp_ratio=4,
+        #     norm_layer=partial(torch.nn.LayerNorm, eps=1e-6),
+        #     num_heads=encoder_num_heads,
+        #     patch_size=vit_patch_size,
+        #     qkv_bias=True,
+        #     use_rel_pos=True,
+        #     global_attn_indexes=encoder_global_attn_indexes,
+        #     window_size=14,
+        #     out_chans=prompt_embed_dim,
+        # )
+        
+        
+        
+        img_size = 1024
+        encoder_patch_size = 16
+        encoder_patch_embed_dim=384
+        normalization_type = "layer_norm"
+        encoder_depth = 12
+        encoder_num_heads=6
+        encoder_mlp_ratio = 4.0
+        encoder_neck_dims = [256, 256]
+        activation_fn = nn.GELU
+        
+        self.image_encoder = ImageEncoderViTESAM(
+            img_size=img_size,
+            patch_size=encoder_patch_size,
+            in_chans=3,
+            patch_embed_dim=encoder_patch_embed_dim,
+            normalization_type=normalization_type,
+            depth=encoder_depth,
+            num_heads=encoder_num_heads,
+            mlp_ratio=encoder_mlp_ratio,
+            neck_dims=encoder_neck_dims,
+            act_layer=activation_fn,
+            )   
+
+        with open("/data/lsq/image_encoder_ESAM.pth", "rb") as f:
+            state_dict = torch.load(f)
+            self.image_encoder.load_state_dict(state_dict)
+
+        self.image_encoder=nn.DataParallel(self.image_encoder)
+
+
+        self.normal_encoder=Encoder(B=5, pretrained=True)
+        
+        h = 2000
+        w = 2000
+        pixel_coords = np.ones((3, h, w)).astype(np.float32)
+        x_range = np.concatenate([np.arange(w).reshape(1, w)] * h, axis=0)
+        y_range = np.concatenate([np.arange(h).reshape(h, 1)] * w, axis=1)
+        pixel_coords[0, :, :] = x_range + 0.5
+        pixel_coords[1, :, :] = y_range + 0.5
+        self.pixel_coords = torch.from_numpy(pixel_coords).unsqueeze(0)
+        
+        with open("/data/lsq/DSINE_encoder.pth", "rb") as f:
+            state_dict = torch.load(f)
+            self.normal_encoder.load_state_dict(state_dict)
+         
     @classmethod
     def from_config(cls, cfg):
         backbone = build_backbone(cfg)
@@ -174,7 +252,6 @@ class MaskFormer(nn.Module):
 
         # OPD
         losses = ["labels", "masks", "mtypes", "morigins", "maxises", "extrinsics"]
-
         criterion = SetCriterion(
             sem_seg_head.num_classes,
             matcher=matcher,
@@ -254,6 +331,33 @@ class MaskFormer(nn.Module):
         """
         images = [x["image"].to(self.device) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+        ##############################################################
+        
+    
+        
+        def preprocess( x: torch.Tensor,image_encoder) -> torch.Tensor:
+            """Normalize pixel values and pad to a square input."""
+            # Normalize colors
+            # Pad
+            h, w = x.shape[-2:]
+            padh = image_encoder.module.img_size - h
+            padw = image_encoder.module.img_size - w
+            x = F.pad(x, (0, padw, 0, padh))
+            return x
+        
+
+        # image_encoder.to(device=self.device)
+        input_images = torch.stack([preprocess(x,self.image_encoder) for x in images], dim=0)
+        # with torch.no_grad():
+        #     image_embeddings = self.image_encoder(input_images)
+        # a=self.SAM_encoder(input_images)
+        image_embeddings = self.image_encoder(input_images)
+        images_tensor = torch.stack(images, dim=0)
+        # B, _, orig_H, orig_W = images_tensor.shape
+        # with torch.no_grad():
+        #     normal_feature=self.normal_encoder(images_tensor)
+        normal_feature=self.normal_encoder(images_tensor)
+        ############################################################
         images = ImageList.from_tensors(images, self.size_divisibility)
 
         # Load the targets if it's training or it's in the groundtruth ablation study
@@ -266,11 +370,13 @@ class MaskFormer(nn.Module):
                 targets = None
 
         features = self.backbone(images.tensor)
-        outputs = self.sem_seg_head(features)
+        outputs = self.sem_seg_head(features,query_embed=image_embeddings,normal_feature=[normal_feature[11],normal_feature[8], normal_feature[6]])
+        # outputs = self.sem_seg_head(features)
 
         if self.training:
             # bipartite matching-based loss
             losses = self.criterion(outputs, targets)
+            # writer.add_scalar('loss_ce', losses['loss_ce'], global_step=None, walltime=None)
 
             for k in list(losses.keys()):
                 if k in self.criterion.weight_dict:
