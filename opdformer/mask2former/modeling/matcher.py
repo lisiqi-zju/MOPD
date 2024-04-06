@@ -98,7 +98,177 @@ class HungarianMatcher(nn.Module):
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
         indices = []
+        indices2 = []
+        ############################################
+        def pad_and_concat(tensor_list):  
 
+            # 确定tensor列表中的最大长度  
+
+            max_len = max(tensor.size(0) for tensor in tensor_list)  
+
+            
+
+            # 初始化一个空的二维tensor列表  
+
+            padded_tensors = []  
+
+            
+
+            # 初始化一个空的mask tensor列表  
+
+            masks = []  
+
+            
+
+            # 遍历每个tensor进行填充  
+
+            for tensor in tensor_list:  
+
+                # 计算需要填充的长度  
+
+                padding_len = max_len - tensor.size(0)  
+
+                
+
+                # 在tensor的开头进行填充，使用tensor中的最后一个元素作为填充值  
+
+                # 也可以使用0或其他默认值作为填充值  
+
+                padded_tensor = torch.nn.functional.pad(tensor, (0, padding_len), 'constant', value=tensor[-1])  
+
+                
+
+                # 创建一个mask tensor，原始tensor部分填充为1，填充部分填充为0  
+
+                mask = torch.ones(padded_tensor.size(), dtype=torch.bool)  
+
+                mask[:tensor.size(0)] = True  
+
+                mask[tensor.size(0):] = False  
+
+                
+
+                # 将填充后的tensor和mask添加到列表中  
+
+                padded_tensors.append(padded_tensor)  
+
+                masks.append(mask)  
+
+            
+
+            # 将所有填充后的tensor拼接成一个二维tensor  
+
+            concatenated_tensor = torch.stack(padded_tensors)  
+
+            
+
+            # 将所有mask tensor拼接成一个二维tensor  
+
+            concatenated_mask = torch.stack(masks)  
+
+            
+
+            return concatenated_tensor, concatenated_mask
+        
+        def pad_box_tensor(box_list):  
+
+            """  
+
+            Pads the box tensors in box_list to the maximum length of any box tensor.  
+
+            
+
+            Args:  
+
+                box_list (list of torch.Tensor): List of box tensors, where each tensor has shape (N, 4)  
+
+                
+
+            Returns:  
+
+                padded_box_tensor (torch.Tensor): Padded box tensor of shape (len(box_list), max_num_boxes, 4)  
+
+            """  
+
+            # 计算box_list中所有box tensor的最大长度  
+
+            max_num_boxes = max(box_tensor.size(0) for box_tensor in box_list)  
+
+            
+
+            # 创建一个空的tensor来存放填充后的box tensor  
+
+            padded_box_tensor = torch.full((len(box_list), max_num_boxes, 4), -1, dtype=torch.float32)  # 用-1作为填充值  
+
+            
+
+            # 遍历每个box tensor，并将其复制到填充tensor的对应位置  
+
+            for i, box_tensor in enumerate(box_list):  
+
+                num_boxes = box_tensor.size(0)  
+
+                padded_box_tensor[i, :num_boxes] = box_tensor  
+
+            
+
+            return padded_box_tensor 
+                    
+        # def
+        from detectron2.structures import BitMasks
+        import torch
+        assert "pred_logits" in outputs
+        pred_logits = outputs["pred_logits"].float()
+        
+        
+        pred_masks=F.interpolate(
+                outputs["pred_masks"],
+                size=(targets[0]["masks"].shape[-2], targets[0]["masks"].shape[-1]),
+                mode="bilinear",
+                align_corners=False,
+            )
+                
+        pred_boxes = [torch.unsqueeze(BitMasks(mask_pred> 0).get_bounding_boxes().tensor,dim=0) for mask_pred in pred_masks]
+        pred_boxes = torch.cat(pred_boxes,dim=0)
+        
+        pred = {"pred_logits": pred_logits.to(outputs["pred_logits"].device),
+                "pred_boxes": pred_boxes.to(outputs["pred_logits"].device)}
+        # targets_labels = [torch.unsqueeze(target["labels"],dim=0) for target in targets]
+        targets_labels = [target["labels"] for target in targets]
+        targets_boxes = [target["gt_bbox"].tensor for target in targets]
+        targets_labels,targets_masks = pad_and_concat(targets_labels) 
+        targets_boxes=pad_box_tensor(targets_boxes)
+        
+        # targets_masks = torch.cat([target["masks"] for target in targets],dim=0) 
+        # a=BitMasks(targets_masks[0] > 0).get_bounding_boxes()
+        # b=BitMasks(outputs["pred_masks"][0]>0).get_bounding_boxes()
+        # a=BitMasks(targets_masks[0]>0).get_bounding_boxes()
+        # targets_boxes = [torch.unsqueeze(BitMasks(mask > 0).get_bounding_boxes().tensor,dim=0) for mask in targets_masks]
+        # targets_boxes = torch.cat(targets_boxes,dim=0)
+        target={"labels": targets_labels.to(outputs["pred_logits"].device),
+                "boxes":targets_boxes.to(outputs["pred_logits"].device),
+                "mask":targets_masks.to(outputs["pred_logits"].device)}
+        
+        import torch
+        from torch.nn import L1Loss, CrossEntropyLoss
+
+        from uotod.match import BalancedSinkhorn
+        from uotod.loss import DetectionLoss
+        from uotod.loss import MultipleObjectiveLoss, GIoULoss, NegativeProbLoss
+
+        matching_method = BalancedSinkhorn(
+            cls_match_module=NegativeProbLoss(reduction="none"),
+            loc_match_module=MultipleObjectiveLoss(
+                losses=[GIoULoss(reduction="none"), L1Loss(reduction="none")],
+                weights=[1., 5.],
+            ),
+            background_cost=0.,  # Does not influence the matching when using balanced OT
+        )
+        # matching = matching_method(pred, target, None)
+        cost_matrix= matching_method.compute_cost_matrix(pred,target,None)
+        matching = matching_method.compute_matching(cost_matrix, target["mask"])
+        ##########################################
+        # cost_matrix= matching_method.compute_cost_matrix(outputs,outputs,None)
         # Iterate through batch size
         for b in range(bs):
 
@@ -152,11 +322,38 @@ class HungarianMatcher(nn.Module):
             C = C.reshape(num_queries, -1).cpu()
 
             indices.append(linear_sum_assignment(C))
-
-        return [
-            (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
-            for i, j in indices
-        ]
+            if torch.isnan(matching).any():
+                continue
+            else:
+                indices2.append(linear_sum_assignment(matching[b][...,:C.shape[1]].cpu()))
+            
+        # return [
+        #         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+        #         for i, j in indices
+        #     ]
+        # print("1",indices)
+        # print("2",indices2)
+        # if len(indices2)==len(indices):
+        #     return [
+        #         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+        #         for i, j in indices2
+        #     ]
+        # else:
+        #     return [
+        #         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+        #         for i, j in indices
+        #     ]
+        if torch.isnan(matching).any():
+            return [
+                (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+                for i, j in indices
+            ]
+        else:
+            return [
+                (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+                for i, j in indices2
+            ]
+            
 
     @torch.no_grad()
     def forward(self, outputs, targets):

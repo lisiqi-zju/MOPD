@@ -264,6 +264,7 @@ class MaskFormer(nn.Module):
             motionnet_type=motionnet_type,
         )
 
+
         # OPD
         if "VOTING" in cfg.MODEL.MOTIONNET:
             voting = cfg.MODEL.MOTIONNET.VOTING
@@ -345,15 +346,12 @@ class MaskFormer(nn.Module):
             x = F.pad(x, (0, padw, 0, padh))
             return x
         
-
-        # image_encoder.to(device=self.device)
         input_images = torch.stack([preprocess(x,self.image_encoder) for x in images], dim=0)
-        # with torch.no_grad():
-        #     image_embeddings = self.image_encoder(input_images)
+        with torch.no_grad():
+            image_embeddings = self.image_encoder(input_images)
         # a=self.SAM_encoder(input_images)
-        image_embeddings = self.image_encoder(input_images)
+        # image_embeddings = self.image_encoder(input_images)
         images_tensor = torch.stack(images, dim=0)
-        # B, _, orig_H, orig_W = images_tensor.shape
         # with torch.no_grad():
         #     normal_feature=self.normal_encoder(images_tensor)
         normal_feature=self.normal_encoder(images_tensor)
@@ -549,6 +547,7 @@ class MaskFormer(nn.Module):
                         "gt_extrinsic": targets_per_image.gt_extrinsic,
                         "gt_extrinsic_quaternion": targets_per_image.gt_extrinsic_quaternion,
                         "gt_extrinsic_6d": targets_per_image.gt_extrinsic_6d,
+                        "gt_bbox":targets_per_image.gt_boxes
                     }
                 )
             else:

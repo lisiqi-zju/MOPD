@@ -457,6 +457,20 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
             )
 
             outputs_class, outputs_mask, attn_mask, outputs_mtype, outputs_morigin, outputs_maxis, outputs_extrinsic = self.forward_prediction_heads(output, mask_features, attn_mask_target_size=size_list[(i + 1) % self.num_feature_levels], query_embed=query_embed)
+            
+
+            if i <5:
+                predictions_class.append(outputs_class)
+                predictions_mask.append(outputs_mask)
+                predictions_mtype.append(outputs_mtype)
+    
+            if i>3 :
+                predictions_morigin.append(outputs_morigin)
+                predictions_maxis.append(outputs_maxis)
+                
+                if self.motionnet_type == "BMOC_V1" or self.motionnet_type == "BMOC_V2" or self.motionnet_type == "BMOC_V3" or self.motionnet_type == "BMOC_V4" or self.motionnet_type == "BMOC_V5" or self.motionnet_type == "BMOC_V6":
+                    predictions_extrinsic.append(outputs_extrinsic)
+            
             # predictions_class.append(outputs_class)
             # predictions_mask.append(outputs_mask)
             # # OPD
@@ -464,20 +478,8 @@ class OPDMultiScaleMaskedTransformerDecoder(nn.Module):
             # predictions_morigin.append(outputs_morigin)
             # predictions_maxis.append(outputs_maxis)
             
-            if i <5:
-                predictions_class.append(outputs_class)
-                predictions_mask.append(outputs_mask)
-                predictions_mtype.append(outputs_mtype)
-    
-            # predictions_class.append(outputs_class)
-            # predictions_mask.append(outputs_mask)
-            # predictions_mtype.append(outputs_mtype)
-            if i>3 :
-                predictions_morigin.append(outputs_morigin)
-                predictions_maxis.append(outputs_maxis)
-                
-                if self.motionnet_type == "BMOC_V1" or self.motionnet_type == "BMOC_V2" or self.motionnet_type == "BMOC_V3" or self.motionnet_type == "BMOC_V4" or self.motionnet_type == "BMOC_V5" or self.motionnet_type == "BMOC_V6":
-                    predictions_extrinsic.append(outputs_extrinsic)
+            # if self.motionnet_type == "BMOC_V1" or self.motionnet_type == "BMOC_V2" or self.motionnet_type == "BMOC_V3" or self.motionnet_type == "BMOC_V4" or self.motionnet_type == "BMOC_V5" or self.motionnet_type == "BMOC_V6":
+            #     predictions_extrinsic.append(outputs_extrinsic)
 
         # assert len(predictions_class) == self.num_layers + 1
         if self.mask_classification:
