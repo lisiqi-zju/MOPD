@@ -314,28 +314,33 @@ class HungarianMatcher(nn.Module):
             from uotod.match import BalancedSinkhorn,Hungarian
             from uotod.loss import DetectionLoss
             from uotod.loss import MultipleObjectiveLoss, GIoULoss, NegativeProbLoss
-
-            # matching_method=Hungarian(
+            # matching_method=BalancedSinkhorn(
             # loc_match_module=GIoULoss(reduction="none"),
-            # background_cost=0.,)
-            matching_method = BalancedSinkhorn(
-                cls_match_module=NegativeProbLoss(reduction="none"),
-                loc_match_module=MultipleObjectiveLoss(
-                    losses=[GIoULoss(reduction="none"), L1Loss(reduction="none")],
-                    weights=[1., 5.],
-                ),
-                background_cost=0.,  # Does not influence the matching when using balanced OT
-            )
-            matching = matching_method(pred, target, None)
-            cost_matrix= matching_method.compute_cost_matrix(pred,target,None)
+            # background_cost=0.,
+            # ) 
+            matching_method=Hungarian(
+            loc_match_module=GIoULoss(reduction="none"),
+            background_cost=0.,background=False,)
+            # matching_method = BalancedSinkhorn(
+            #     cls_match_module=NegativeProbLoss(reduction="none"),
+            #     loc_match_module=MultipleObjectiveLoss(
+            #         losses=[GIoULoss(reduction="none"), L1Loss(reduction="none")],
+            #         weights=[1., 5.],
+            #     ),
+            #     background_cost=0.,  # Does not influence the matching when using balanced OT
+            # )
+            # matching = matching_method(pred, target, None)
+            # cost_matrix= matching_method.compute_cost_matrix(pred,target,None)
+            cost_matrix= torch.unsqueeze(C,dim=0).to(target["mask"].device) 
             matching = matching_method.compute_matching(cost_matrix, target["mask"])
             matching = matching.squeeze(0)
             max_values, max_indices = torch.max(matching, dim=0)  
             row_indices = torch.arange(matching.size(0)).unsqueeze(1).to(matching.device) 
             max_positions = torch.cat((max_indices.unsqueeze(1).to(matching.device) ,torch.arange(0, max_indices.shape[0]).unsqueeze(1).to(matching.device) ), dim=1) 
-            indices_to_remove = max_positions[:, 1] == C.shape[1] 
-            max_positions_filtered = max_positions[~indices_to_remove] 
-            output = max_positions_filtered.unbind(dim=1)
+            # indices_to_remove = max_positions[:, 1] == C.shape[1] 
+            # max_positions_filtered = max_positions[~indices_to_remove] 
+            # output = max_positions_filtered.unbind(dim=1)
+            output = max_positions.unbind(dim=1)
             
             if torch.isnan(matching).any():
                 continue
