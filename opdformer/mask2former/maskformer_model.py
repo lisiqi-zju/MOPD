@@ -21,8 +21,8 @@ from .modeling.criterion import convert_to_filled_tensor
 
 import numpy as np
 
-# from torch.utils.tensorboard import SummaryWriter 
-# writer = SummaryWriter('./tensorboard_log')
+from torch.utils.tensorboard import SummaryWriter 
+writer = SummaryWriter('./tensorboard_log')
 
 from .segmen_anything import ImageEncoderViT,ImageEncoderViTESAM,Encoder,Decoder
 from functools import partial
@@ -374,8 +374,9 @@ class MaskFormer(nn.Module):
         if self.training:
             # bipartite matching-based loss
             losses = self.criterion(outputs, targets)
-            # writer.add_scalar('loss_ce', losses['loss_ce'], global_step=None, walltime=None)
-
+            writer.add_scalar('loss_ce', losses['loss_ce'], global_step=None, walltime=None)
+            writer.add_scalar('loss_mask',losses['loss_mask'], global_step=None, walltime=None)
+            writer.add_scalar('loss_maxis',losses['loss_maxis'], global_step=None, walltime=None)
             for k in list(losses.keys()):
                 if k in self.criterion.weight_dict:
                     losses[k] *= self.criterion.weight_dict[k]

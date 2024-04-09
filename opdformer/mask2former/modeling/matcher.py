@@ -215,61 +215,11 @@ class HungarianMatcher(nn.Module):
             return padded_box_tensor 
                     
         # def
-        from detectron2.structures import BitMasks
-        import torch
-        assert "pred_logits" in outputs
-        pred_logits = outputs["pred_logits"].float()
         
-        
-        pred_masks=F.interpolate(
-                outputs["pred_masks"],
-                size=(targets[0]["masks"].shape[-2], targets[0]["masks"].shape[-1]),
-                mode="bilinear",
-                align_corners=False,
-            )
-                
-        pred_boxes = [torch.unsqueeze(BitMasks(mask_pred> 0).get_bounding_boxes().tensor,dim=0) for mask_pred in pred_masks]
-        pred_boxes = torch.cat(pred_boxes,dim=0)
-        
-        pred = {"pred_logits": pred_logits.to(outputs["pred_logits"].device),
-                "pred_boxes": pred_boxes.to(outputs["pred_logits"].device)}
-        # targets_labels = [torch.unsqueeze(target["labels"],dim=0) for target in targets]
-        targets_labels = [target["labels"] for target in targets]
-        targets_boxes = [target["gt_bbox"].tensor for target in targets]
-        targets_labels,targets_masks = pad_and_concat(targets_labels) 
-        targets_boxes=pad_box_tensor(targets_boxes)
-        
-        # targets_masks = torch.cat([target["masks"] for target in targets],dim=0) 
-        # a=BitMasks(targets_masks[0] > 0).get_bounding_boxes()
-        # b=BitMasks(outputs["pred_masks"][0]>0).get_bounding_boxes()
-        # a=BitMasks(targets_masks[0]>0).get_bounding_boxes()
-        # targets_boxes = [torch.unsqueeze(BitMasks(mask > 0).get_bounding_boxes().tensor,dim=0) for mask in targets_masks]
-        # targets_boxes = torch.cat(targets_boxes,dim=0)
-        target={"labels": targets_labels.to(outputs["pred_logits"].device),
-                "boxes":targets_boxes.to(outputs["pred_logits"].device),
-                "mask":targets_masks.to(outputs["pred_logits"].device)}
-        
-        import torch
-        from torch.nn import L1Loss, CrossEntropyLoss
-
-        from uotod.match import BalancedSinkhorn
-        from uotod.loss import DetectionLoss
-        from uotod.loss import MultipleObjectiveLoss, GIoULoss, NegativeProbLoss
-
-        matching_method = BalancedSinkhorn(
-            cls_match_module=NegativeProbLoss(reduction="none"),
-            loc_match_module=MultipleObjectiveLoss(
-                losses=[GIoULoss(reduction="none"), L1Loss(reduction="none")],
-                weights=[1., 5.],
-            ),
-            background_cost=0.,  # Does not influence the matching when using balanced OT
-        )
-        # matching = matching_method(pred, target, None)
-        cost_matrix= matching_method.compute_cost_matrix(pred,target,None)
-        matching = matching_method.compute_matching(cost_matrix, target["mask"])
         ##########################################
         # cost_matrix= matching_method.compute_cost_matrix(outputs,outputs,None)
         # Iterate through batch size
+        import torch
         for b in range(bs):
 
             out_prob = outputs["pred_logits"][b].softmax(-1)  # [num_queries, num_classes]
@@ -322,37 +272,86 @@ class HungarianMatcher(nn.Module):
             C = C.reshape(num_queries, -1).cpu()
 
             indices.append(linear_sum_assignment(C))
+            
+            from detectron2.structures import BitMasks
+            import torch
+            assert "pred_logits" in outputs
+            pred_logits = torch.unsqueeze(outputs["pred_logits"][b],dim=0).float()
+            pred_masks = torch.unsqueeze(outputs["pred_masks"][b],dim=0).float()
+            
+            pred_masks=F.interpolate(
+                    pred_masks,
+                    size=(targets[0]["masks"].shape[-2], targets[0]["masks"].shape[-1]),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                    
+            pred_boxes = [torch.unsqueeze(BitMasks(mask_pred> 0).get_bounding_boxes().tensor,dim=0) for mask_pred in pred_masks]
+            pred_boxes = torch.cat(pred_boxes,dim=0)
+            
+            pred = {"pred_logits": pred_logits.to(outputs["pred_logits"].device),
+                    "pred_boxes": pred_boxes.to(outputs["pred_logits"].device)}
+            # targets_labels = [torch.unsqueeze(target["labels"],dim=0) for target in targets]
+            targets_labels = torch.unsqueeze(targets[b]["labels"],dim=0)
+            targets_boxes = torch.unsqueeze(targets[b]["gt_bbox"].tensor ,dim=0)
+            # targets_boxes = [target["gt_bbox"].tensor for target in targets]
+            targets_labels,targets_masks = pad_and_concat(targets_labels) 
+            targets_boxes=pad_box_tensor(targets_boxes)
+            
+            # targets_masks = torch.cat([target["masks"] for target in targets],dim=0) 
+            # a=BitMasks(targets_masks[0] > 0).get_bounding_boxes()
+            # b=BitMasks(outputs["pred_masks"][0]>0).get_bounding_boxes()
+            # a=BitMasks(targets_masks[0]>0).get_bounding_boxes()
+            # targets_boxes = [torch.unsqueeze(BitMasks(mask > 0).get_bounding_boxes().tensor,dim=0) for mask in targets_masks]
+            # targets_boxes = torch.cat(targets_boxes,dim=0)
+            target={"labels": targets_labels.to(outputs["pred_logits"].device),
+                    "boxes":targets_boxes.to(outputs["pred_logits"].device),
+                    "mask":targets_masks.to(outputs["pred_logits"].device)}
+            
+            import torch
+            from torch.nn import L1Loss, CrossEntropyLoss
+
+            from uotod.match import BalancedSinkhorn,Hungarian
+            from uotod.loss import DetectionLoss
+            from uotod.loss import MultipleObjectiveLoss, GIoULoss, NegativeProbLoss
+
+            # matching_method=Hungarian(
+            # loc_match_module=GIoULoss(reduction="none"),
+            # background_cost=0.,)
+            matching_method = BalancedSinkhorn(
+                cls_match_module=NegativeProbLoss(reduction="none"),
+                loc_match_module=MultipleObjectiveLoss(
+                    losses=[GIoULoss(reduction="none"), L1Loss(reduction="none")],
+                    weights=[1., 5.],
+                ),
+                background_cost=0.,  # Does not influence the matching when using balanced OT
+            )
+            matching = matching_method(pred, target, None)
+            cost_matrix= matching_method.compute_cost_matrix(pred,target,None)
+            matching = matching_method.compute_matching(cost_matrix, target["mask"])
+            matching = matching.squeeze(0)
+            max_values, max_indices = torch.max(matching, dim=0)  
+            row_indices = torch.arange(matching.size(0)).unsqueeze(1).to(matching.device) 
+            max_positions = torch.cat((max_indices.unsqueeze(1).to(matching.device) ,torch.arange(0, max_indices.shape[0]).unsqueeze(1).to(matching.device) ), dim=1) 
+            indices_to_remove = max_positions[:, 1] == C.shape[1] 
+            max_positions_filtered = max_positions[~indices_to_remove] 
+            output = max_positions_filtered.unbind(dim=1)
+            
             if torch.isnan(matching).any():
                 continue
             else:
-                indices2.append(linear_sum_assignment(matching[b][...,:C.shape[1]].cpu()))
-            
-        # return [
-        #         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
-        #         for i, j in indices
-        #     ]
-        # print("1",indices)
-        # print("2",indices2)
-        # if len(indices2)==len(indices):
+                indices2.append(output)  
+        return indices2
+        # if torch.isnan(matching).any():
         #     return [
         #         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
-        #         for i, j in indices2
+        #         for i, j in indices
         #     ]
         # else:
         #     return [
         #         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
-        #         for i, j in indices
+        #         for i, j in indices2
         #     ]
-        if torch.isnan(matching).any():
-            return [
-                (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
-                for i, j in indices
-            ]
-        else:
-            return [
-                (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
-                for i, j in indices2
-            ]
             
 
     @torch.no_grad()
