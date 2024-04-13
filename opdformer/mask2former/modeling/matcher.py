@@ -311,24 +311,26 @@ class HungarianMatcher(nn.Module):
             import torch
             from torch.nn import L1Loss, CrossEntropyLoss
 
-            from uotod.match import BalancedSinkhorn,Hungarian
+            from uotod.match import BalancedSinkhorn,Hungarian,UnbalancedSinkhorn
             from uotod.loss import DetectionLoss
             from uotod.loss import MultipleObjectiveLoss, GIoULoss, NegativeProbLoss
-            # matching_method=BalancedSinkhorn(
+            # matching_method=UnbalancedSinkhorn(
             # loc_match_module=GIoULoss(reduction="none"),
             # background_cost=0.,
+            # background=False,
             # ) 
-            matching_method=Hungarian(
-            loc_match_module=GIoULoss(reduction="none"),
-            background_cost=0.,background=False,)
-            # matching_method = BalancedSinkhorn(
-            #     cls_match_module=NegativeProbLoss(reduction="none"),
-            #     loc_match_module=MultipleObjectiveLoss(
-            #         losses=[GIoULoss(reduction="none"), L1Loss(reduction="none")],
-            #         weights=[1., 5.],
-            #     ),
-            #     background_cost=0.,  # Does not influence the matching when using balanced OT
-            # )
+            # matching_method=Hungarian(
+            # loc_match_module=GIoULoss(reduction="none"),
+            # background_cost=0.,background=False,)
+            matching_method = UnbalancedSinkhorn(
+                cls_match_module=NegativeProbLoss(reduction="none"),
+                loc_match_module=MultipleObjectiveLoss(
+                    losses=[GIoULoss(reduction="none"), L1Loss(reduction="none")],
+                    weights=[1., 5.],
+                ),
+                background_cost=0.,  # Does not influence the matching when using balanced OT
+                background=False,
+            )
             # matching = matching_method(pred, target, None)
             # cost_matrix= matching_method.compute_cost_matrix(pred,target,None)
             cost_matrix= torch.unsqueeze(C,dim=0).to(target["mask"].device) 
@@ -346,17 +348,18 @@ class HungarianMatcher(nn.Module):
                 continue
             else:
                 indices2.append(output)  
-        return indices2
-        # if torch.isnan(matching).any():
-        #     return [
-        #         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
-        #         for i, j in indices
-        #     ]
-        # else:
-        #     return [
-        #         (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
-        #         for i, j in indices2
-        #     ]
+        # return indices2
+        if torch.isnan(matching).any():
+            return [
+                (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+                for i, j in indices
+            ]
+        else:
+            # return indices2
+            return [
+                (torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64))
+                for i, j in indices
+            ]
             
 
     @torch.no_grad()
