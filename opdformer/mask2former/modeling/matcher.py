@@ -10,6 +10,7 @@ from torch import nn
 from torch.cuda.amp import autocast
 
 from detectron2.projects.point_rend.point_features import point_sample
+import math
 
 
 def batch_dice_loss(inputs: torch.Tensor, targets: torch.Tensor):
@@ -65,7 +66,6 @@ def batch_sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor):
 batch_sigmoid_ce_loss_jit = torch.jit.script(
     batch_sigmoid_ce_loss
 )  # type: torch.jit.ScriptModule
-
 
 class HungarianMatcher(nn.Module):
     """This class computes an assignment between the targets and the predictions of the network
@@ -269,8 +269,52 @@ class HungarianMatcher(nn.Module):
                 + self.cost_class * cost_class
                 + self.cost_dice * cost_dice
             )
-            C = C.reshape(num_queries, -1).cpu()
+            
+            ###############伪代码###################
+            pred_origin=outputs["pred_morigins"][b]
+            gt_origin=targets[b]["gt_origins"].to(out_mask)
+            pred_axis=outputs["pred_maxises"][b]
+            gt_axis=targets[b]["gt_axises"].to(out_mask)
+            #####先把target和predic从outputs和targets里读出来字典的key我瞎写的你改成正确的
+            diagonal_length = 1
+            # 初始化结果列表
+            dtOrigin_list = []
+            dtAxis_list = []
 
+            # 对于gt_origin和gt_axis中的每个元素进行循环
+            for i in range(gt_origin.shape[0]):
+                single_gt_origin = gt_origin[i].unsqueeze(0)  # 添加额外的维度以便广播
+                single_gt_axis = gt_axis[i].unsqueeze(0)
+
+                # 计算位移
+                shift = pred_origin - single_gt_origin
+
+                # 计算叉积和相关的评估指标 MO (matched origin)
+                cross_product = torch.cross(shift, single_gt_axis.expand_as(shift))
+                cross_product_norm = torch.norm(cross_product, dim=1)
+                gt_axis_norm = torch.norm(single_gt_axis, dim=1)
+                result = cross_product_norm / gt_axis_norm
+                dtOrigin = result / diagonal_length
+                dtOrigin_list.append(dtOrigin)
+
+                # 计算预测轴和真实轴之间的角度差 MD (Metric Degree)
+                cosAxis = torch.sum(single_gt_axis * pred_axis, dim=1) / (torch.norm(single_gt_axis, dim=1) * torch.norm(pred_axis, dim=1))
+                cosAxis = torch.clamp(cosAxis, min=-1, max=1)  # 确保值在 [-1, 1] 范围内
+                dtAxis = torch.acos(cosAxis) * (180 / torch.tensor(math.pi).cpu())
+                dtAxis_list.append(dtAxis)
+
+            # 你可以选择将 dtOrigin_list 和 dtAxis_list 转换成张量或其他形式以便进一步处理
+            dtOrigin_tensor = torch.stack(dtOrigin_list, dim=1)
+            dtAxis_tensor = torch.stack(dtAxis_list, dim=1)
+            
+            Oweight = 0.0001
+            Aweight = 0.001
+            
+            C = C + Oweight * dtOrigin_tensor + Aweight * dtAxis_tensor
+            #然后把O和A的loss加到C里就行了，注意和C的维度和device匹配，可以先只把Axis写好测试。
+            ################################
+            
+            C = C.reshape(num_queries, -1).cpu()
             indices.append(linear_sum_assignment(C))
             
             from detectron2.structures import BitMasks
