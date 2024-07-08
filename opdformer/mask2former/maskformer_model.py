@@ -59,6 +59,7 @@ class MaskFormer(nn.Module):
         gtdet,
         inference_matcher,
         gtextrinsic,
+        checkpoint_path
     ):
         """
         Args:
@@ -117,33 +118,8 @@ class MaskFormer(nn.Module):
         self.gtextrinsic = gtextrinsic
         
         
-        
-        prompt_embed_dim = 256
-        image_size = 1024
-        vit_patch_size = 16
-
-        encoder_embed_dim=1280
         encoder_depth=32
         encoder_num_heads=16
-        encoder_global_attn_indexes=[7, 15, 23, 31]
-
-        self.SAM_encoder=ImageEncoderViT(
-            depth=encoder_depth,
-            embed_dim=encoder_embed_dim,
-            img_size=image_size,
-            mlp_ratio=4,
-            norm_layer=partial(torch.nn.LayerNorm, eps=1e-6),
-            num_heads=encoder_num_heads,
-            patch_size=vit_patch_size,
-            qkv_bias=True,
-            use_rel_pos=True,
-            global_attn_indexes=encoder_global_attn_indexes,
-            window_size=14,
-            out_chans=prompt_embed_dim,
-        )
-        
-        
-        
         img_size = 1024
         encoder_patch_size = 16
         encoder_patch_embed_dim=384
@@ -166,28 +142,23 @@ class MaskFormer(nn.Module):
             neck_dims=encoder_neck_dims,
             act_layer=activation_fn,
             )   
-
-        with open("/data/lsq/image_encoder_ESAM.pth", "rb") as f:
-            state_dict = torch.load(f)
-            self.image_encoder.load_state_dict(state_dict)
-
         self.image_encoder=nn.DataParallel(self.image_encoder)
-
-
+        
         self.normal_encoder=Encoder(B=5, pretrained=True)
         
-        h = 2000
-        w = 2000
-        pixel_coords = np.ones((3, h, w)).astype(np.float32)
-        x_range = np.concatenate([np.arange(w).reshape(1, w)] * h, axis=0)
-        y_range = np.concatenate([np.arange(h).reshape(h, 1)] * w, axis=1)
-        pixel_coords[0, :, :] = x_range + 0.5
-        pixel_coords[1, :, :] = y_range + 0.5
-        self.pixel_coords = torch.from_numpy(pixel_coords).unsqueeze(0)
+        # h = 2000
+        # w = 2000
+        # pixel_coords = np.ones((3, h, w)).astype(np.float32)
+        # x_range = np.concatenate([np.arange(w).reshape(1, w)] * h, axis=0)
+        # y_range = np.concatenate([np.arange(h).reshape(h, 1)] * w, axis=1)
+        # pixel_coords[0, :, :] = x_range + 0.5
+        # pixel_coords[1, :, :] = y_range + 0.5
+        # self.pixel_coords = torch.from_numpy(pixel_coords).unsqueeze(0)
         
-        with open("/data/lsq/DSINE_encoder.pth", "rb") as f:
-            state_dict = torch.load(f)
-            self.normal_encoder.load_state_dict(state_dict)
+
+        state_dict = torch.load(checkpoint_path)
+        self.load_state_dict(state_dict)
+
          
     @classmethod
     def from_config(cls, cfg):
@@ -299,6 +270,7 @@ class MaskFormer(nn.Module):
             "gtdet": gtdet,
             "inference_matcher": inference_matcher,
             "gtextrinsic": gtextrinsic,
+            "checkpoint_path":cfg.MODEL.WEIGHTS
         }
 
     @property
