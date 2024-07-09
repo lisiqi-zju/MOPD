@@ -1,6 +1,8 @@
+```sh
 conda create -n opd python=3.9
 conda activate opd
 pip install -r requirements.txt
+```
 
 
 ## Dataset
