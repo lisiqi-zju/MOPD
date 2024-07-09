@@ -47,7 +47,8 @@ python evaluate_on_log.py \
 * To evaluate directly on pre-saved inference file, pass the file path as an argument `--inference-file <PATH_TO_INFERENCE_FILE>`.
 
 ## Pretrained-Models
-
+https://pan.baidu.com/s/10mY2fRmE3ms3dFzBGrzpUw?pwd=478x 
+Extract code：478x
 
 
 ## Visualization
