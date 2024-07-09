@@ -46,6 +46,9 @@ python evaluate_on_log.py \
 * Evaluate on test set: `--opts MODEL.WEIGHTS <PPRETRAINED_MODEL> DATASETS.TEST "('MotionNet_test',)"`.
 * To evaluate directly on pre-saved inference file, pass the file path as an argument `--inference-file <PATH_TO_INFERENCE_FILE>`.
 
+## Pretrained-Models
+
+
 
 ## Visualization
 The visualization code is based on [OPD](https://github.com/3dlg-hcvc/OPD.git) repository. We only support visualization based on raw dataset format ([download link](https://docs.google.com/forms/d/e/1FAIpQLSeG1Jafcy9P_OFBJ8WffYt6WJsJszXPqKIgQz0tGTYYuhm4SA/viewform?vc=0&c=0&w=1&flr=0) (5.0G)).
