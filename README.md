@@ -1,3 +1,9 @@
+#Locate n' Rotate: Two-stage Openable Part Detection with Foundation Model Priors
+### accepted by ACCV 2024(oral)
+ [![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2412.13173) 
+ 
+
+
 ```sh
 conda create -n opd python=3.9
 conda activate opd
